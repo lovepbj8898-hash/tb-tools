@@ -3,25 +3,19 @@
   var W = window;
   var D = document;
 
-  D.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'><h2 style='color:#0f766e;'>tb任务</h2><p id='status' style='color:#666;'>等待粘贴...</p></div><input id='query' style='width:90%;margin:20px auto;display:block;padding:10px;border:1px solid #ccc;' />";
+  // 直接读取由深链注入进来的全局变量
+  var targetId = W.task_id || "";
+  var targetTitle = W.task_kw || "";
+
+  D.body.innerHTML = "<div style='text-align:center;margin-top:50px;font-family:sans-serif;'><h2 style='color:#0f766e;'>tb任务</h2><p id='status' style='color:#666;'>准备就绪</p></div>";
   var statusEl = D.getElementById('status');
-  var queryInput = D.getElementById('query');
 
-  // 核心动作1：强制让输入框获得焦点，准备接收电脑的“粘贴”指令
-  setTimeout(function() {
-      queryInput.focus();
-  }, 500);
+  if (!targetId) {
+      statusEl.innerText = "未收到任务参数";
+      return;
+  }
 
-  // 核心动作2：监听输入框，一旦电脑端粘贴了内容，立刻触发搜索
-  queryInput.addEventListener('input', function() {
-      var q = queryInput.value.trim();
-      if (!q) return;
-      statusEl.innerText = "已收到标题：" + q;
-      statusEl.style.color = "green";
-      
-      // 触发自动搜索
-      runTask(q);
-  });
+  statusEl.innerText = "正在搜索：" + targetTitle;
 
   function mtopSend(api, param, version) {
     return new Promise(function (resolve, reject) {
@@ -53,39 +47,21 @@
     return { detail_v: "3.3.2", exParams: JSON.stringify(ex), id: itemId };
   }
 
-  function runTask(title) {
-      statusEl.innerText = "正在搜索：" + title;
-      
-      mtopSend('mtop.relationrecommend.MtopRecommend.recommend', buildSearchParam(title)).then(function(r) {
-          statusEl.innerText = "搜索成功，正在提取目标...";
+  // 搜索并提取数据
+  mtopSend('mtop.relationrecommend.MtopRecommend.recommend', buildSearchParam(targetTitle)).then(function(r) {
+      statusEl.innerText = "搜索成功，正在拉取详情...";
+      mtopSend('mtop.taobao.detail.data.get', buildDetailParam(targetId)).then(function(res) {
+          statusEl.innerText = "抓取成功，已发送回电脑！";
+          statusEl.style.color = "green";
           
-          // 简单解析列表，直接取第一个商品（通常排第一的就是我们找的）
-          var targetId = "";
-          try {
-              var data = typeof r.data === 'string' ? JSON.parse(r.data) : r.data;
-              var arr = data.itemsArray || data.items || data.auctions || [];
-              if (arr.length > 0) targetId = String(arr[0].item_id || arr[0].nid || arr[0].auctionId);
-          } catch(e) {}
+          // 通过 Logcat 发送给电脑
+          var payload = { itemId: targetId, alldetail: res };
+          console.log("TASK_DATA_START::" + JSON.stringify(payload) + "::TASK_DATA_END");
           
-          if (!targetId) {
-              statusEl.innerText = "未搜到商品！";
-              statusEl.style.color = "red";
-              return;
-          }
-          
-          statusEl.innerText = "正在拉取详情...";
-          mtopSend('mtop.taobao.detail.data.get', buildDetailParam(targetId)).then(function(res) {
-              statusEl.innerText = "抓取成功！正在发送给电脑...";
-              statusEl.style.color = "green";
-              // 核心动作3：将数据打印到日志，供电脑端 logcat 截获
-              var payload = { itemId: targetId, alldetail: res };
-              console.log("TASK_DATA_START::" + JSON.stringify(payload) + "::TASK_DATA_END");
-          }).catch(function (e) {
-              statusEl.innerText = "详情抓取失败。";
-          });
-          
-      }).catch(function(e) {
-          statusEl.innerText = "搜索失败。";
+      }).catch(function (e) {
+          statusEl.innerText = "详情抓取失败: " + JSON.stringify(e);
       });
-  }
+  }).catch(function(e) {
+      statusEl.innerText = "搜索失败: " + JSON.stringify(e);
+  });
 })();
